@@ -30,8 +30,19 @@ async def load_reranker_config(agent_id: str) -> RerankerConfig | None:
             "reranker_config",
             None,
         )
-        if config is not None and config.enabled and config.model_name:
-            return config
+        if config is None or not config.enabled or not config.model_name:
+            return None
+        # Keep enablement aligned with the embedding rule: a reranker
+        # without a credential cannot authenticate, so it is not enabled.
+        # Report it here: this is the point where the decision is made, and
+        # a silent no-op would look like a working reranker.
+        if not config.api_key.strip():
+            logger.warning(
+                "[rerank] enabled but api_key not configured; "
+                "reranking disabled",
+            )
+            return None
+        return config
     except Exception:
         logger.warning("[rerank] failed to load config", exc_info=True)
     return None
@@ -45,6 +56,9 @@ async def call_reranker_api(
     """Return document indices ordered by an OpenAI-compatible reranker."""
     if not config.base_url:
         logger.warning("[rerank] base_url not configured")
+        return None
+    if not config.api_key.strip():
+        logger.warning("[rerank] api_key not configured")
         return None
     if not query or not documents:
         return None
@@ -60,7 +74,7 @@ async def call_reranker_api(
             response = await client.post(
                 url,
                 headers={
-                    "Authorization": f"Bearer {config.api_key}",
+                    "Authorization": f"Bearer {config.api_key.strip()}",
                     "Content-Type": "application/json",
                 },
                 json=payload,
