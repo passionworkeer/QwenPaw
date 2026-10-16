@@ -56,7 +56,7 @@ from alibabacloud_dingtalk.card_1_0 import (
 from alibabacloud_tea_util import models as tea_util_models
 from Tea.exceptions import TeaException
 
-from ..utils import file_url_to_local_path
+from ..utils import file_url_to_local_path, split_text
 from ....config.config import DingTalkConfig as DingTalkChannelConfig
 from ....config.utils import get_config_path
 from ....constant import DEFAULT_MEDIA_DIR
@@ -75,6 +75,8 @@ from .constants import (
     AI_CARD_PROCESSING_TEXT,
     AI_CARD_RECOVERY_FINAL_TEXT,
     AI_CARD_TOKEN_PREEMPTIVE_REFRESH_SECONDS,
+    DINGTALK_HARD_MAX_LEN,
+    DINGTALK_MAX_TEXT_LEN,
     DINGTALK_TOKEN_TTL_SECONDS,
 )
 from .content_utils import (
@@ -998,28 +1000,63 @@ class DingTalkChannel(BaseChannel):
                 mentions.extend(f"@{did}" for did in at_dingtalk_ids)
             text = " ".join(mentions) + "\n" + text
 
-        if len(text) > 3500:
-            payload: Dict[str, Any] = {
-                "msgtype": "text",
-                "text": {"content": text},
-            }
-        else:
-            norm = dingtalk_markdown.normalize_dingtalk_markdown(text)
-            payload = {
-                "msgtype": "markdown",
-                "markdown": {
-                    "title": f"💬{norm[:10]}...",
-                    "text": norm,
-                },
-            }
+        # A long reply is split into several Markdown messages instead of
+        # being downgraded to plain text: downgrading silently destroyed every
+        # Markdown construct, and GFM tables were the worst affected.
+        # split_text keeps code fences and tables renderable across chunks.
+        # A short reply yields a single chunk and is sent unchanged.
+        #
+        # split_text drops chunks that are entirely whitespace, which can yield
+        # an empty list; fall back to sending the text as-is rather than
+        # reporting success without sending anything.
+        chunks = split_text(text, max_len=DINGTALK_MAX_TEXT_LEN) or [text]
 
-        if at_payload:
-            payload["at"] = at_payload
+        # A chunk that fails makes the whole call report failure even when
+        # earlier chunks already landed. The caller then falls back to the
+        # Open API, which re-sends the whole body and so duplicates what
+        # arrived -- a visible, self-correcting artifact. Reporting success
+        # on a partial send would instead drop the remaining chunks silently
+        # and would bypass the api_send strict-delivery contract enforced in
+        # send()/send_content_parts().
+        ok = True
+        for idx, chunk in enumerate(chunks):
+            norm = dingtalk_markdown.normalize_dingtalk_markdown(chunk)
+            if len(norm) > DINGTALK_HARD_MAX_LEN:
+                # A single indivisible unit (e.g. one enormous table row) can
+                # still exceed the markdown ceiling after normalization. Plain
+                # text tolerates a far larger body, so degrade just this chunk
+                # rather than dropping the reply. A pathological row past even
+                # the plain-text ceiling is still reported as a failed chunk
+                # below, not as a delivered one.
+                payload: Dict[str, Any] = {
+                    "msgtype": "text",
+                    "text": {"content": norm},
+                }
+            else:
+                payload = {
+                    "msgtype": "markdown",
+                    "markdown": {
+                        "title": f"💬{norm[:10]}...",
+                        "text": norm,
+                    },
+                }
+            # Mention the user once, on the first chunk, so a long reply does
+            # not fire a push notification per chunk.
+            if at_payload and idx == 0:
+                payload["at"] = at_payload
 
-        return await self._send_payload_via_session_webhook(
-            session_webhook,
-            payload,
-        )
+            if not await self._send_payload_via_session_webhook(
+                session_webhook,
+                payload,
+            ):
+                ok = False
+                logger.warning(
+                    "dingtalk _send_via_session_webhook: chunk %s/%s failed",
+                    idx + 1,
+                    len(chunks),
+                )
+
+        return ok
 
     async def _send_via_open_api(
         self,
@@ -1048,24 +1085,35 @@ class DingTalkChannel(BaseChannel):
             len(text),
         )
 
-        if len(text) > 3500:
-            msg_key = "sampleText"
-            msg_param = json.dumps({"content": text})
-        else:
-            norm = dingtalk_markdown.normalize_dingtalk_markdown(text)
-            msg_key = "sampleMarkdown"
-            msg_param = json.dumps(
-                {"title": f"💬{norm[:10]}...", "text": norm},
-            )
+        chunks = split_text(text, max_len=DINGTALK_MAX_TEXT_LEN) or [text]
+        ok = True
+        for idx, chunk in enumerate(chunks):
+            norm = dingtalk_markdown.normalize_dingtalk_markdown(chunk)
+            if len(norm) > DINGTALK_HARD_MAX_LEN:
+                # See _send_via_session_webhook: degrade only this chunk.
+                msg_key = "sampleText"
+                msg_param = json.dumps({"content": norm})
+            else:
+                msg_key = "sampleMarkdown"
+                msg_param = json.dumps(
+                    {"title": f"💬{norm[:10]}...", "text": norm},
+                )
+            if not await self._send_robot_message(
+                msg_key=msg_key,
+                msg_param=msg_param,
+                conversation_id=conversation_id,
+                is_group=is_group,
+                sender_staff_id=sender_staff_id,
+                caller="_send_via_open_api",
+            ):
+                ok = False
+                logger.warning(
+                    "dingtalk _send_via_open_api: chunk %s/%s failed",
+                    idx + 1,
+                    len(chunks),
+                )
 
-        return await self._send_robot_message(
-            msg_key=msg_key,
-            msg_param=msg_param,
-            conversation_id=conversation_id,
-            is_group=is_group,
-            sender_staff_id=sender_staff_id,
-            caller="_send_via_open_api",
-        )
+        return ok
 
     async def _try_open_api_fallback(
         self,
