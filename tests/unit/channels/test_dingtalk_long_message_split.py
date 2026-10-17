@@ -23,7 +23,6 @@ Run:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Dict, Generator, List
 from unittest.mock import AsyncMock, MagicMock
 
@@ -323,7 +322,7 @@ class TestDingTalkLongMessageSplit:
         """If nothing at all was delivered the caller must fall back."""
         calls: List[int] = []
 
-        async def _capture(_session_webhook, payload):
+        async def _capture(_session_webhook, _payload):
             calls.append(1)
             return False
 
