@@ -87,7 +87,7 @@ def _make_big_table(rows: int) -> str:
     ]
     for i in range(rows):
         lines.append(
-            f"| request_{i:04d} | {i}.{i}ms | {i * 2}.{i}ms | {i * 3}.{i}ms |"
+            f"| request_{i:04d} | {i}.{i}ms | {i * 2}.{i}ms | {i * 3}.{i}ms |",
         )
     return "\n".join(lines)
 
