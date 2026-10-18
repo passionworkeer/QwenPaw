@@ -337,8 +337,9 @@ def _open_atomic_temp(
         flags |= os.O_BINARY
 
     for _attempt in range(100):
+        # Do not extend the destination name: it may already fill NAME_MAX.
         temp_path = target.with_name(
-            f".{target.name}.{secrets.token_hex(8)}.tmp",
+            f".qwenpaw-{secrets.token_hex(8)}.tmp",
         )
         try:
             fd = os.open(temp_path, flags, 0o600)
