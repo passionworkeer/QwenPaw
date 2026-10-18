@@ -12,6 +12,7 @@ Covers:
 # pylint: disable=protected-access,unused-argument
 
 import asyncio
+import errno
 import os
 import stat
 import threading
@@ -208,6 +209,29 @@ class TestReadFile:
 # ---------------------------------------------------------------------------
 # write_file
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["a" * 240 + ".md", "报告" * 40 + ".md"])
+async def test_write_and_edit_long_filename(tmp_path, name):
+    """Public file tools support valid long names without leaking temps."""
+    path = tmp_path / name
+    try:
+        path.write_text("probe", encoding="utf-8")
+    except OSError as exc:
+        if exc.errno == errno.ENAMETOOLONG:
+            pytest.skip("Filesystem cannot create this long destination")
+        raise
+    path.unlink()
+
+    written = await write_file(str(path), "original")
+    assert "Wrote" in written.content[0].text
+    assert path.read_text(encoding="utf-8") == "original"
+
+    edited = await edit_file(str(path), "original", "replacement")
+    assert "Error" not in edited.content[0].text
+    assert path.read_text(encoding="utf-8") == "replacement"
+    assert list(tmp_path.iterdir()) == [path]
 
 
 class TestWriteFile:

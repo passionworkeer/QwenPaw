@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import os
 import stat
@@ -37,7 +38,31 @@ def test_write_json_atomic_replaces_complete_document(tmp_path: Path) -> None:
     write_json_atomic(path, {"value": "new"})
 
     assert json.loads(path.read_text(encoding="utf-8")) == {"value": "new"}
-    assert not list(tmp_path.glob(".state.json.*.tmp"))
+    assert list(tmp_path.iterdir()) == [path]
+
+
+@pytest.mark.parametrize("name", ["a" * 240 + ".md", "报告" * 40 + ".md"])
+@pytest.mark.parametrize("existing", [False, True])
+def test_write_text_atomic_accepts_long_filename(
+    tmp_path: Path,
+    name: str,
+    existing: bool,
+) -> None:
+    """Atomic writes accept names that the filesystem can already create."""
+    path = tmp_path / name
+    try:
+        path.write_text("old", encoding="utf-8")
+    except OSError as exc:
+        if exc.errno == errno.ENAMETOOLONG:
+            pytest.skip("Filesystem cannot create this long destination")
+        raise
+    if not existing:
+        path.unlink()
+
+    write_text_atomic(path, "new")
+
+    assert path.read_text(encoding="utf-8") == "new"
+    assert list(tmp_path.iterdir()) == [path]
 
 
 def test_write_text_atomic_preserves_destination_on_replace_error(
@@ -57,7 +82,7 @@ def test_write_text_atomic_preserves_destination_on_replace_error(
         write_text_atomic(path, "new")
 
     assert path.read_text(encoding="utf-8") == "old"
-    assert not list(tmp_path.glob(".state.txt.*.tmp"))
+    assert list(tmp_path.iterdir()) == [path]
 
 
 @pytest.mark.skipif(
