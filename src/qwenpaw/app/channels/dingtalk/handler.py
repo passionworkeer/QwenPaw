@@ -433,6 +433,12 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
                     TextContent(type=ContentType.TEXT, text=text),
                 )
             # Handle quoted (replied-to) message if present.
+            target_parts = content if content else content_parts
+            user_text = "\n".join(
+                part.text
+                for part in target_parts
+                if isinstance(part, TextContent)
+            )
             quoted_text_parts: List[str] = []
             quoted_content_parts: List[Any] = []
             self._process_quoted_message(
@@ -441,7 +447,6 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
                 quoted_content_parts,
             )
             # Merge quoted parts into the main content list.
-            target_parts = content if content else content_parts
             if quoted_text_parts:
                 quoted_combined = "\n".join(quoted_text_parts)
                 target_parts.insert(
@@ -473,6 +478,7 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
 
             meta: Dict[str, Any] = {
                 "conversation_type": conversation_type,
+                "user_text": user_text,
                 "is_group": is_group,
                 "sender_staff_id": getattr(
                     incoming_message,

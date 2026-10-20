@@ -2552,6 +2552,7 @@ class DingTalkChannel(BaseChannel):
                 message_ids_list.append(str(mid))
 
         merged_meta["batched_count"] = len(items)
+        self._merge_user_text(items, merged_meta)
         merged_meta["_message_ids"] = message_ids_list
         # Queue is FIFO: batch = [oldest, ..., newest]. Prefer
         # session_webhook (and related metadata) from newest item so send

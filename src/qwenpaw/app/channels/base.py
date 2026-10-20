@@ -7,6 +7,7 @@ Base Channel: bound to AgentRequest/AgentResponse, unified by process.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import time
@@ -217,6 +218,7 @@ class BaseChannel(ABC):
             ):
                 if k in m:
                     merged_meta[k] = m[k]
+        self._merge_user_text(items, merged_meta)
         return {
             "channel_id": first.get("channel_id") or self.channel,
             "sender_id": first.get("sender_id") or "",
@@ -250,11 +252,14 @@ class BaseChannel(ABC):
         else:
             new_msg = msg
             setattr(new_msg, "content", all_contents)
+        merged_meta = dict(getattr(first, "channel_meta", None) or {})
+        self._merge_user_text(requests, merged_meta)
         if hasattr(first, "model_copy"):
             return first.model_copy(
-                update={"input": [new_msg]},
+                update={"input": [new_msg], "channel_meta": merged_meta},
             )
         first.input[0] = new_msg
+        first.channel_meta = merged_meta
         return first
 
     def _on_debounce_buffer_append(
@@ -1381,7 +1386,15 @@ class BaseChannel(ABC):
         _apply_no_text_debounce). Override only when you need
         a different flow (e.g. print).
         """
-        if self._debounce_seconds > 0 and self._is_native_payload(payload):
+        registry = getattr(self, "_command_registry", None)
+        is_control = registry is not None and registry.is_control_command(
+            self._extract_query_from_payload(payload),
+        )
+        if (
+            not is_control
+            and self._debounce_seconds > 0
+            and self._is_native_payload(payload)
+        ):
             key = self.get_debounce_key(payload)
             if key in self._debounce_pending and self._debounce_pending[key]:
                 self._on_debounce_buffer_append(
@@ -1409,6 +1422,25 @@ class BaseChannel(ABC):
             return
         await self._consume_one_request(payload)
 
+    @staticmethod
+    def _user_text_from_payload(payload: Any) -> Optional[str]:
+        """Return the ingress parser's user text, including an empty body."""
+        meta = (
+            payload.get("meta")
+            if isinstance(payload, dict)
+            else getattr(payload, "channel_meta", None)
+        )
+        if isinstance(meta, dict) and isinstance(meta.get("user_text"), str):
+            return meta["user_text"]
+        return None
+
+    def _merge_user_text(self, items: List[Any], meta: Dict[str, Any]) -> None:
+        """Keep original user text aligned with a batch's merged contents."""
+        if any(self._user_text_from_payload(it) is not None for it in items):
+            meta["user_text"] = "\n".join(
+                self._extract_query_from_payload(it) for it in items
+            )
+
     def _extract_query_from_payload(self, payload: Any) -> str:
         """Extract query text from payload for command detection.
 
@@ -1418,24 +1450,21 @@ class BaseChannel(ABC):
         Returns:
             Query text string (empty if not found)
         """
+        user_text = self._user_text_from_payload(payload)
+        if user_text is not None:
+            return user_text
         if isinstance(payload, dict):
             parts = payload.get("content_parts") or []
-            for part in parts:
-                if isinstance(part, dict) and part.get("type") == "text":
-                    return part.get("text") or ""
-                if hasattr(part, "type") and part.type == "text":
-                    return getattr(part, "text", "") or ""
-            return ""
-        if hasattr(payload, "input"):
+        elif hasattr(payload, "input"):
             inp = payload.input or []
-            if inp and hasattr(inp[0], "content"):
-                content = inp[0].content or []
-                for part in content:
-                    if isinstance(part, dict):
-                        if part.get("type") == "text":
-                            return part.get("text") or ""
-                    elif hasattr(part, "type") and part.type == "text":
-                        return getattr(part, "text", "") or ""
+            parts = (getattr(inp[0], "content", None) or []) if inp else []
+        else:
+            parts = []
+        for part in parts:
+            if isinstance(part, dict) and part.get("type") == "text":
+                return part.get("text") or ""
+            if hasattr(part, "type") and part.type == "text":
+                return getattr(part, "text", "") or ""
         return ""
 
     def _debounce_payload(self, payload: Any) -> bool:
@@ -1509,6 +1538,22 @@ class BaseChannel(ABC):
                 return
 
         request = self._payload_to_request(payload)
+        user_text = self._user_text_from_payload(payload)
+        registry = getattr(self, "_command_registry", None)
+        if (
+            user_text is not None
+            and registry is not None
+            and registry.is_control_command(user_text)
+            and request.input
+        ):
+            # Runtime slash dispatch reads input, not channel_meta. Only
+            # controls get a command-only copy; chat keeps quote-first input.
+            request = copy.copy(request)
+            message = copy.copy(request.input[-1])
+            message.content = [
+                TextContent(type=ContentType.TEXT, text=user_text),
+            ]
+            request.input = [message]
         # Build meta from payload so session_webhook is never lost when
         # request has no channel_meta (e.g. AgentRequest schema has no field).
         if isinstance(payload, dict):

@@ -1609,6 +1609,7 @@ class QQChannel(BaseChannel):
         is_group = spec.message_type in ("group", "guild")
         meta: Dict[str, Any] = {
             "message_type": spec.message_type,
+            "user_text": text,
             "message_id": msg_id,
             "sender_id": sender,
             "user_name": author.get("username", ""),

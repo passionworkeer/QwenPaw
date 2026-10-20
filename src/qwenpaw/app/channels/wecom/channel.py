@@ -391,6 +391,7 @@ class WecomChannel(BaseChannel):
         last = items[-1] if isinstance(items[-1], dict) else {}
 
         merged_meta = dict(last.get("meta") or {})
+        self._merge_user_text(items, merged_meta)
 
         return {
             "channel_id": first.get("channel_id") or self.channel,
@@ -454,6 +455,7 @@ class WecomChannel(BaseChannel):
 
             content_parts: List[Any] = []
             text_parts: List[str] = []
+            user_text_parts: List[str] = []
 
             if msgtype == "text":
                 text = (body.get("text") or {}).get("content", "").strip()
@@ -477,6 +479,7 @@ class WecomChannel(BaseChannel):
                         )
                         text = text.strip()
                     text_parts.append(text)
+                    user_text_parts.append(text)
 
             elif msgtype == "image":
                 img_info = body.get("image") or {}
@@ -506,6 +509,7 @@ class WecomChannel(BaseChannel):
                 asr_text = voice_info.get("content", "").strip()
                 if asr_text:
                     text_parts.append(asr_text)
+                    user_text_parts.append(asr_text)
                 else:
                     text_parts.append("[voice: no text]")
 
@@ -564,6 +568,7 @@ class WecomChannel(BaseChannel):
                         t = item.get("text", {}).get("content", "").strip()
                         if t:
                             text_parts.append(t)
+                            user_text_parts.append(t)
                     elif itype == "image":
                         img = item.get("image") or {}
                         url = img.get("url") or ""
@@ -687,6 +692,7 @@ class WecomChannel(BaseChannel):
             is_group = chat_type == "group"
             meta: Dict[str, Any] = {
                 "wecom_sender_id": sender_id,
+                "user_text": "\n".join(user_text_parts),
                 "wecom_chatid": chatid,
                 "wecom_chat_type": chat_type,
                 "wecom_frame": frame,

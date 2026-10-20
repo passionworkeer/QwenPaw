@@ -135,6 +135,21 @@ def instantiate_channel(
 
 async def _process_batch(ch: BaseChannel, batch: List[Any]) -> None:
     """Merge if needed and process one payload (native or request)."""
+    registry = getattr(ch, "_command_registry", None)
+    if (
+        len(batch) > 1
+        and registry is not None
+        and any(
+            registry.is_control_command(
+                ch._extract_query_from_payload(payload),
+            )
+            for payload in batch
+        )
+    ):
+        # Each control has its own command/arguments and must reach dispatch.
+        for payload in batch:
+            await ch._consume_one_request(payload)
+        return
     if ch.channel == "dingtalk" and batch and ch._is_native_payload(batch[0]):
         first = batch[0] if isinstance(batch[0], dict) else {}
         logger.info(

@@ -956,6 +956,11 @@ class OneBotChannel(BaseChannel):
         is_group = message_type == "group"
         meta: Dict[str, Any] = {
             "message_type": message_type,
+            "user_text": "\n".join(
+                part.text
+                for part in content_parts
+                if isinstance(part, TextContent)
+            ),
             "message_id": message_id,
             "sender_id": user_id,
             "user_name": sender_name,

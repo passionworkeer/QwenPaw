@@ -518,6 +518,8 @@ class FeishuChannel(BaseChannel):
             p = it if isinstance(it, dict) else {}
             merged_parts.extend(p.get("content_parts") or [])
         last = items[-1] if isinstance(items[-1], dict) else {}
+        merged_meta = dict(last.get("meta") or {})
+        self._merge_user_text(items, merged_meta)
         return {
             "channel_id": first.get("channel_id") or self.channel,
             "sender_id": last.get("sender_id", first.get("sender_id", "")),
@@ -525,7 +527,7 @@ class FeishuChannel(BaseChannel):
             "user_id": last.get("user_id", first.get("user_id", "")),
             "session_id": last.get("session_id", first.get("session_id", "")),
             "content_parts": merged_parts,
-            "meta": dict(last.get("meta") or {}),
+            "meta": merged_meta,
         }
 
     def to_handle_from_target(self, *, user_id: str, session_id: str) -> str:
@@ -850,6 +852,7 @@ class FeishuChannel(BaseChannel):
             is_group = chat_type == "group"
             meta: Dict[str, Any] = {
                 "feishu_message_id": message_id,
+                "user_text": main_text or "",
                 "feishu_chat_id": chat_id,
                 "feishu_chat_type": chat_type,
                 "feishu_sender_id": sender_id,

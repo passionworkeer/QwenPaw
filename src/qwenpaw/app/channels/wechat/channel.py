@@ -363,6 +363,8 @@ class WeChatChannel(BaseChannel):
             p = it if isinstance(it, dict) else {}
             merged_parts.extend(p.get("content_parts") or [])
         last = items[-1] if isinstance(items[-1], dict) else {}
+        merged_meta = dict(last.get("meta") or {})
+        self._merge_user_text(items, merged_meta)
         return {
             "channel_id": first.get("channel_id") or self.channel,
             "sender_id": last.get("sender_id", first.get("sender_id", "")),
@@ -370,7 +372,7 @@ class WeChatChannel(BaseChannel):
             "user_id": last.get("user_id", first.get("user_id", "")),
             "session_id": last.get("session_id", first.get("session_id", "")),
             "content_parts": merged_parts,
-            "meta": dict(last.get("meta") or {}),
+            "meta": merged_meta,
         }
 
     # ------------------------------------------------------------------
@@ -670,6 +672,7 @@ class WeChatChannel(BaseChannel):
 
             content_parts: List[Any] = []
             text_parts: List[str] = []
+            user_text_parts: List[str] = []
 
             item_list: List[Dict[str, Any]] = msg.get("item_list") or []
             for item in item_list:
@@ -716,6 +719,7 @@ class WeChatChannel(BaseChannel):
                         # Only add text if it's not just a filename
                         if not is_filename:
                             text_parts.append(text)
+                            user_text_parts.append(text)
 
                 elif item_type == 2:
                     # Image (AES-128-ECB encrypted on CDN)
@@ -761,6 +765,7 @@ class WeChatChannel(BaseChannel):
                     )
                     if asr_text:
                         text_parts.append(asr_text)
+                        user_text_parts.append(asr_text)
                     else:
                         text_parts.append("[voice: no transcription]")
 
@@ -849,6 +854,7 @@ class WeChatChannel(BaseChannel):
             is_group = bool(group_id)
             meta: Dict[str, Any] = {
                 "wechat_from_user_id": from_user_id,
+                "user_text": "\n".join(user_text_parts),
                 "wechat_to_user_id": to_user_id,
                 "wechat_context_token": context_token,
                 "wechat_group_id": group_id,

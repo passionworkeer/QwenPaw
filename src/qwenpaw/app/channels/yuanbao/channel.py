@@ -911,6 +911,11 @@ class YuanbaoChannel(BaseChannel):
             return
 
         # Inject quoted-message prefix from cloud_custom_data.quote, if any.
+        user_text = "\n".join(
+            part.text
+            for part in content_parts
+            if isinstance(part, TextContent)
+        )
         # Yuanbao only provides desc/sender_* in quote payloads (no url/key,
         # no API to fetch original), so we surface a textual placeholder
         # so the model knows the kind/filename it is replying to.
@@ -944,6 +949,7 @@ class YuanbaoChannel(BaseChannel):
         # Build meta early so _check_group_mention can inspect it
         meta: Dict[str, Any] = {
             "chat_type": chat_type,
+            "user_text": user_text,
             "group_code": group_code,
             "msg_id": msg_id,
             "raw_sender_id": raw_sender_id,
